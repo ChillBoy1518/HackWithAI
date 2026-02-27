@@ -1,0 +1,216 @@
+import streamlit as st
+import pandas as pd
+import random
+from datetime import datetime
+
+st.set_page_config(page_title="Food Aggregator Pro", page_icon="🍽️", layout="wide")
+
+# --------------------------------------------------
+# SESSION STATE INIT
+# --------------------------------------------------
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if "cart" not in st.session_state:
+    st.session_state.cart = []
+
+# --------------------------------------------------
+# LOGIN SYSTEM
+# --------------------------------------------------
+
+if not st.session_state.logged_in:
+    st.title("🔐 Login to Food Aggregator Pro")
+
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        if username == "admin" and password == "1234":
+            st.session_state.logged_in = True
+            st.success("Login Successful!")
+            st.rerun()
+        else:
+            st.error("Invalid credentials (Try admin / 1234)")
+    st.stop()
+
+# --------------------------------------------------
+# LOGOUT BUTTON
+# --------------------------------------------------
+
+st.sidebar.markdown("---")
+if st.sidebar.button("🔓 Logout"):
+    st.session_state.logged_in = False
+    st.session_state.cart = []
+    st.rerun()
+
+# --------------------------------------------------
+# MAIN APP
+# --------------------------------------------------
+
+st.title("🍽️ Food Aggregator Pro Dashboard")
+
+df = pd.read_csv("food_database.csv")
+
+platforms = ["Swiggy","Zomato","FoodPanda","MagicPin"]
+
+restaurants = {
+    "Swiggy":"Spice Villa",
+    "Zomato":"Royal Dine",
+    "FoodPanda":"Urban Tadka",
+    "MagicPin":"Food Hub"
+}
+
+areas = {
+    "Swiggy":"Banjara Hills",
+    "Zomato":"Jubilee Hills",
+    "FoodPanda":"Hitech City",
+    "MagicPin":"Madhapur"
+}
+
+# --------------------------------------------------
+# SIDEBAR FILTERS
+# --------------------------------------------------
+
+st.sidebar.header("Filters")
+
+city = st.sidebar.selectbox("City",["Hyderabad","Mumbai","Delhi","Bangalore"])
+cuisine = st.sidebar.selectbox("Cuisine",["All"]+list(df["Cuisine"].unique()))
+food_type = st.sidebar.selectbox("Veg/Non-Veg",["All","Veg","Non-Veg"])
+budget = st.sidebar.number_input("Budget (₹)",0,2000,500)
+coupon = st.sidebar.text_input("Coupon (FLAT50 / 10OFF)")
+
+sort_option = st.sidebar.selectbox(
+    "Sort By",
+    ["Smart Score","Lowest Price","Highest Rating","Fastest Delivery"]
+)
+
+food_input = st.text_input("🔎 Search Food")
+
+# --------------------------------------------------
+# FILTER DATA
+# --------------------------------------------------
+
+filtered = df.copy()
+
+if cuisine != "All":
+    filtered = filtered[filtered["Cuisine"]==cuisine]
+
+if food_type != "All":
+    filtered = filtered[filtered["Type"]==food_type]
+
+if food_input:
+    filtered = filtered[filtered["Dish"].str.contains(food_input,case=False)]
+
+if not filtered.empty:
+
+    row = filtered.iloc[0]
+
+    base_prices = {p: row[p] + 50 for p in platforms}
+    distances = {p: round(random.uniform(1,6),1) for p in platforms}
+    delivery = {p: distances[p]*10 for p in platforms}
+    ratings = {p: round(random.uniform(3.5,4.9),1) for p in platforms}
+    quality = {p: random.randint(70,100) for p in platforms}
+
+    surge = 1.15 if 18 <= datetime.now().hour <= 22 else 1
+
+    final = {
+        p: (base_prices[p]*surge) + delivery[p]
+        for p in platforms
+    }
+
+    if coupon == "FLAT50":
+        final = {p: max(final[p]-50,0) for p in platforms}
+    elif coupon == "10OFF":
+        final = {p: final[p]*0.9 for p in platforms}
+
+    valid = {p: final[p] for p in final if final[p] <= budget}
+
+    if not valid:
+        st.warning("No results within budget.")
+    else:
+
+        smart = {
+            p: (ratings[p]*quality[p]) / final[p]
+            for p in valid
+        }
+
+        if sort_option == "Lowest Price":
+            sorted_platforms = sorted(valid,key=valid.get)
+        elif sort_option == "Highest Rating":
+            sorted_platforms = sorted(ratings,key=ratings.get,reverse=True)
+        elif sort_option == "Fastest Delivery":
+            sorted_platforms = sorted(distances,key=distances.get)
+        else:
+            sorted_platforms = sorted(smart,key=smart.get,reverse=True)
+
+        best = sorted_platforms[0]
+
+        st.markdown("---")
+        st.subheader("Platform Comparison")
+
+        cols = st.columns(4)
+
+        for i,p in enumerate(platforms):
+            with cols[i]:
+
+                if p == best:
+                    st.success(f"### 🏆 {p}")
+                else:
+                    st.markdown(f"### {p}")
+
+                st.write(f"🍴 {restaurants[p]}")
+                st.write(f"⭐ Rating: {ratings[p]}")
+                st.write(f"🥗 Quality: {quality[p]}/100")
+                st.write(f"🗺 Distance: {distances[p]} km")
+                st.write(f"⏱ ETA: {int(distances[p]*5+15)} mins")
+                st.write(f"💰 Final Price: ₹{final[p]:.0f}")
+
+                if st.button(f"Add to Cart ({p})"):
+                    st.session_state.cart.append(
+                        (row["Dish"],p,final[p])
+                    )
+                    st.success("Added to Cart!")
+
+        # CART
+        st.markdown("---")
+        st.subheader("🛒 Cart")
+
+        if st.session_state.cart:
+            cart_df = pd.DataFrame(
+                st.session_state.cart,
+                columns=["Dish","Platform","Price"]
+            )
+
+            st.dataframe(cart_df, width="stretch")
+
+            total = cart_df["Price"].sum()
+            st.metric("Total Cart Value",f"₹{total:.0f}")
+
+            if st.button("Clear Cart"):
+                st.session_state.cart = []
+                st.rerun()
+
+        # MAP
+        st.markdown("---")
+        st.subheader("Restaurant Locations")
+
+        map_df = pd.DataFrame({
+            "lat":[17.385+i*0.01 for i in range(4)],
+            "lon":[78.486+i*0.01 for i in range(4)]
+        })
+
+        st.map(map_df)
+
+        # DOWNLOAD
+        st.download_button(
+            "Download Comparison CSV",
+            pd.DataFrame(valid.items(),columns=["Platform","Price"]).to_csv(index=False),
+            "comparison.csv",
+            "text/csv"
+        )
+
+        st.success(f"Best Choice: {best} - {restaurants[best]} at ₹{final[best]:.0f}")
+
+else:
+    st.info("Search for a food item to begin.")
